@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -60,8 +62,104 @@ type UserData struct {
 	Action       string   `json:"action"`
 }
 
-// Глобальная переменная для хранения данных пользователей
-var userDataMap = make(map[int64]*UserData)
+// PerformanceStats хранит статистику производительности
+type PerformanceStats struct {
+	mu                  sync.Mutex
+	TotalRequests       int64
+	TotalResponseTime   time.Duration
+	Last10ResponseTimes []time.Duration
+	Errors              int64
+	APIResponseTimes    []APIResponseTime
+}
+
+type APIResponseTime struct {
+	Endpoint  string
+	Duration  time.Duration
+	Timestamp time.Time
+}
+
+// Глобальные переменные
+var (
+	userDataMap = make(map[int64]*UserData)
+	stats       PerformanceStats
+)
+
+// Update обновляет статистику производительности
+func (ps *PerformanceStats) Update(duration time.Duration) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	ps.TotalRequests++
+	ps.TotalResponseTime += duration
+
+	ps.Last10ResponseTimes = append(ps.Last10ResponseTimes, duration)
+	if len(ps.Last10ResponseTimes) > 10 {
+		ps.Last10ResponseTimes = ps.Last10ResponseTimes[1:]
+	}
+}
+
+// RecordAPIResponse записывает время ответа API
+func (ps *PerformanceStats) RecordAPIResponse(endpoint string, duration time.Duration) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	ps.APIResponseTimes = append(ps.APIResponseTimes, APIResponseTime{
+		Endpoint:  endpoint,
+		Duration:  duration,
+		Timestamp: time.Now(),
+	})
+
+	if len(ps.APIResponseTimes) > 100 {
+		ps.APIResponseTimes = ps.APIResponseTimes[1:]
+	}
+}
+
+// IncrementErrors увеличивает счетчик ошибок
+func (ps *PerformanceStats) IncrementErrors() {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.Errors++
+}
+
+// String возвращает статистику в виде строки
+func (ps *PerformanceStats) String() string {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	avgResponse := time.Duration(0)
+	if ps.TotalRequests > 0 {
+		avgResponse = ps.TotalResponseTime / time.Duration(ps.TotalRequests)
+	}
+
+	last10Avg := time.Duration(0)
+	if len(ps.Last10ResponseTimes) > 0 {
+		var sum time.Duration
+		for _, t := range ps.Last10ResponseTimes {
+			sum += t
+		}
+		last10Avg = sum / time.Duration(len(ps.Last10ResponseTimes))
+	}
+
+	lastAPI := "нет данных"
+	if len(ps.APIResponseTimes) > 0 {
+		last := ps.APIResponseTimes[len(ps.APIResponseTimes)-1]
+		lastAPI = fmt.Sprintf("%s (%.2f ms)", last.Endpoint, last.Duration.Seconds()*1000)
+	}
+
+	return fmt.Sprintf(
+		"📊 Статистика производительности:\n\n"+
+			"• Всего запросов: %d\n"+
+			"• Среднее время обработки: %.2f ms\n"+
+			"• Среднее время (последние 10): %.2f ms\n"+
+			"• Ошибок: %d\n"+
+			"• Последний запрос к API: %s",
+		ps.TotalRequests,
+		avgResponse.Seconds()*1000,
+		last10Avg.Seconds()*1000,
+		ps.Errors,
+		lastAPI,
+	)
+}
 
 // Получение основной клавиатуры
 func getMainKeyboard() tgbotapi.ReplyKeyboardMarkup {
@@ -69,6 +167,9 @@ func getMainKeyboard() tgbotapi.ReplyKeyboardMarkup {
 		tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("Погода сейчас"),
 			tgbotapi.NewKeyboardButton("Прогноз на 3 дня"),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("Статистика скорости"),
 		),
 	)
 }
@@ -86,10 +187,11 @@ func getCitiesKeyboard(cities []string) tgbotapi.ReplyKeyboardMarkup {
 	return tgbotapi.NewReplyKeyboard(rows...)
 }
 
-// Запрос погоды
+// Запрос погоды с замером времени
 func getWeather(city string, days int) (*WeatherResponse, error) {
-	baseURL := "http://api.weatherapi.com/v1/forecast.json"
+	start := time.Now()
 
+	baseURL := "http://api.weatherapi.com/v1/forecast.json"
 	params := url.Values{}
 	params.Add("key", WeatherAPIKey)
 	params.Add("q", city)
@@ -98,6 +200,7 @@ func getWeather(city string, days int) (*WeatherResponse, error) {
 
 	resp, err := http.Get(fmt.Sprintf("%s?%s", baseURL, params.Encode()))
 	if err != nil {
+		stats.IncrementErrors()
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -105,14 +208,24 @@ func getWeather(city string, days int) (*WeatherResponse, error) {
 	var weatherData WeatherResponse
 	err = json.NewDecoder(resp.Body).Decode(&weatherData)
 	if err != nil {
+		stats.IncrementErrors()
 		return nil, err
 	}
+
+	// Записываем время ответа API
+	duration := time.Since(start)
+	stats.RecordAPIResponse("weatherAPI", duration)
 
 	return &weatherData, nil
 }
 
 // Обработчик /start
 func handleStart(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
+	start := time.Now()
+	defer func() {
+		stats.Update(time.Since(start))
+	}()
+
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 		"Привет! Я бот погоды. Напиши название города или выбери действие:")
 	msg.ReplyMarkup = getMainKeyboard()
@@ -121,6 +234,11 @@ func handleStart(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
 
 // Обработчик сообщений
 func handleMessage(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
+	start := time.Now()
+	defer func() {
+		stats.Update(time.Since(start))
+	}()
+
 	text := update.Message.Text
 	chatID := update.Message.Chat.ID
 
@@ -154,6 +272,12 @@ func handleMessage(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
 			bot.Send(msg)
 		}
 		userData.Action = "forecast"
+
+	case "Статистика скорости":
+		msg := tgbotapi.NewMessage(chatID, stats.String())
+		msg.ReplyMarkup = getMainKeyboard()
+		bot.Send(msg)
+		return
 
 	case "Назад":
 		msg := tgbotapi.NewMessage(chatID, "Выбери действие:")
@@ -248,7 +372,6 @@ func main() {
 	}
 
 	bot.Debug = true
-
 	log.Printf("Authorized on account %s", bot.Self.UserName)
 
 	u := tgbotapi.NewUpdate(0)
