@@ -8,7 +8,7 @@ const BOT_TOKEN = "7800321238:AAGpNKr1CaYGweApXoft2HFCrwcR_Fardw8";
 // Создаем экземпляр бота
 const bot = new TelegramBot(BOT_TOKEN, {polling: true});
 
-// Клавиатура для удобства
+// Клавиатура
 function getMainKeyboard() {
     return {
         keyboard: [["Погода сейчас", "Прогноз на 3 дня"]],
@@ -26,7 +26,7 @@ function getCitiesKeyboard(cities) {
     };
 }
 
-// Функция для запроса погоды
+//для запроса погоды
 async function getWeather(city, days = 1) {
     const url = "http://api.weatherapi.com/v1/forecast.json";
     const params = {
@@ -45,7 +45,7 @@ async function getWeather(city, days = 1) {
     }
 }
 
-// Обработчик /start
+// oбработчик 
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
     bot.sendMessage(
@@ -62,7 +62,7 @@ bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
     
-    // Пропускаем команду /start, так как у нее есть отдельный обработчик
+    // Пропускаем команду
     if (text.startsWith('/')) return;
     
     // Инициализируем userData если его нет
@@ -71,7 +71,7 @@ bot.on('message', async (msg) => {
     
     const userData = bot.userData[chatId];
     
-    // Если у пользователя нет списка городов, создаем его
+    // нет списка городов, создаем 
     if (!userData.recentCities) {
         userData.recentCities = [];
     }
@@ -118,7 +118,7 @@ bot.on('message', async (msg) => {
         const city = text;
         const action = userData.action;
 
-        // Обновляем список последних городов (максимум 3)
+        // Обновляем список последних городов (макс 3)
         if (!userData.recentCities.includes(city)) {
             userData.recentCities.unshift(city);
             userData.recentCities = userData.recentCities.slice(0, 3);
