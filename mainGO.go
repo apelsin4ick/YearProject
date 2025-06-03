@@ -56,13 +56,13 @@ type ForecastDay struct {
 	} `json:"day"`
 }
 
-// UserData хранит данные пользователя
+//  хранит данные пользователя
 type UserData struct {
 	RecentCities []string `json:"recent_cities"`
 	Action       string   `json:"action"`
 }
 
-// PerformanceStats хранит статистику производительности
+//  хранит статистику производительности
 type PerformanceStats struct {
 	mu                  sync.Mutex
 	TotalRequests       int64
@@ -98,7 +98,7 @@ func (ps *PerformanceStats) Update(duration time.Duration) {
 	}
 }
 
-// RecordAPIResponse записывает время ответа API
+// записывает время ответа API
 func (ps *PerformanceStats) RecordAPIResponse(endpoint string, duration time.Duration) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -114,14 +114,14 @@ func (ps *PerformanceStats) RecordAPIResponse(endpoint string, duration time.Dur
 	}
 }
 
-// IncrementErrors увеличивает счетчик ошибок
+// увеличивает счетчик ошибок
 func (ps *PerformanceStats) IncrementErrors() {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	ps.Errors++
 }
 
-// String возвращает статистику в виде строки
+//  возвращает статистику в виде строки
 func (ps *PerformanceStats) String() string {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -355,7 +355,7 @@ func handleMessage(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
 	}
 }
 
-// Вспомогательная функция для проверки наличия элемента в слайсе
+// функция для проверки наличия элемента в слайсе
 func contains(slice []string, item string) bool {
 	for _, s := range slice {
 		if strings.EqualFold(s, item) {
